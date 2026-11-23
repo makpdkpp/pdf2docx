@@ -424,7 +424,8 @@ def plan_cpu_workers(replicas: int | None = None, threads: int | None = None,
         return replicas, max(1, cpus // replicas)
     threads = threads or (4 if cpus >= 8 else cpus)
     bf16 = dtype == "bf16" or (dtype == "auto" and quant != "int8" and cpu_has_fast_bf16())
-    per_copy_gb = 2.0 if bf16 or quant == "int8" else 3.5     # weights + activations, with headroom
+    # measured on a 16-vCPU Xeon E5-2680 v4 VM: about 1.1 GB resident per fp32 copy
+    per_copy_gb = 1.0 if bf16 or quant == "int8" else 1.6     # weights + activations, with headroom
     by_ram = int((_available_memory_gb() - 2) // per_copy_gb)  # keep 2 GB for the rest
     return max(1, min(cpus // threads, by_ram)), threads
 

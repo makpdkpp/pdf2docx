@@ -96,8 +96,8 @@ cd /opt/pdf2docx/deploy && docker compose up -d
 | `BIND`, `PORT` | ที่อยู่และพอร์ตที่เว็บฟัง |
 | `WEB_USER`, `WEB_PASSWORD` | บัญชีเข้าเว็บ (รหัสผ่านว่างได้เฉพาะเมื่อ `BIND=127.0.0.1`) |
 | `MAX_UPLOAD_MB` | ขนาด PDF สูงสุด (ค่าเริ่มต้น 200) |
-| `OCR_REPLICAS` | จำนวน copy ของโมเดลที่อ่านหน้าพร้อมกัน (ว่าง = เลือกเองจากจำนวน CPU และ RAM ที่ว่าง; copy ละราว 3.5 GB แบบ fp32) |
-| `OCR_THREADS` | จำนวน thread ต่อ copy (ว่าง = 4) |
+| `OCR_REPLICAS` | จำนวน copy ของโมเดลที่อ่านหน้าพร้อมกัน (ว่าง = เลือกเองจากจำนวน CPU และ RAM ที่ว่าง; copy ละราว 1.1 GB แบบ fp32) |
+| `OCR_THREADS` | จำนวน thread ต่อ copy (ว่าง = 4; บน Xeon E5 v4 ค่า 2 ใช้ core ได้เต็มกว่า) |
 | `OCR_DTYPE` | `auto` (ใช้ bf16 ถ้า CPU รองรับในตัว), `fp32`, `bf16` |
 | `OCR_QUANT` | `none` หรือ `int8` (เร็วขึ้นและใช้ RAM น้อยลง แต่ต้องตรวจคุณภาพก่อน) |
 | `PUID`, `PGID` | ผู้ใช้ที่เป็นเจ้าของ `webdata/` |
@@ -106,7 +106,7 @@ cd /opt/pdf2docx/deploy && docker compose up -d
 ## ปรับความเร็วบน CPU
 โมเดลหนึ่ง copy สร้างข้อความทีละ token จึงใช้ core ได้ไม่เกินราว 4-6 core ถึงจะเห็น CPU 100% ก็ตาม
 (thread ที่เหลือวนรอ) ระบบจึงเปิดโมเดลหลาย copy ให้แต่ละ copy อ่านคนละหน้า
-เช่น เครื่อง 16 core / RAM 32 GB จะได้ 4 copy x 4 thread อัตโนมัติ
+บน Xeon E5-2680 v4 (VM 16 vCPU) พบว่าแต่ละ copy ใช้ได้จริงราว 2 thread จึงแนะนำ `OCR_REPLICAS=8`, `OCR_THREADS=2`
 
 วัดความเร็วบนเครื่องตัวเอง (8 หน้าแรกของไฟล์ทดสอบ):
 ```bash
