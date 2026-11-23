@@ -1,3 +1,15 @@
+# core (CLI + Word output)
 pymupdf
 python-docx
 markdown
+pillow
+numpy
+httpx
+# web app
+fastapi
+uvicorn
+python-multipart
+# optional: local Transformers backend instead of vLLM
+# torch
+# transformers
+# OCR client: pip install "./model[client]"  (nemotron_parse, from the model folder)

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แปลง PDF เป็น Word</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --text: #1f2328; --muted: #6b7280; --line: #e3e1dc;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+    --track: #e9e7e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --card: #1e2125; --text: #e6e8eb; --muted: #9aa3ad; --line: #30353b;
+      --accent: #4c8dff; --accent-text: #0b1220; --ok: #4ac26b; --warn: #d4a72c; --err: #ff7b72;
+      --track: #2a2f35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.55 "Leelawadee UI", "Sarabun", "Noto Sans Thai", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 12px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  .banner { border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+            padding: 10px 14px; margin-bottom: 16px; font-size: 14px; display: none; }
+  .banner.show { display: block; }
+  .banner.err { border-color: var(--err); color: var(--err); }
+  .drop { display: block; border: 2px dashed var(--line); border-radius: 14px; background: var(--card);
+          padding: 34px 20px; text-align: center; cursor: pointer; transition: border-color .15s; }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); }
+  .drop strong { display: block; font-size: 17px; }
+  .drop span { color: var(--muted); font-size: 14px; }
+  .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .row { display: flex; gap: 12px; align-items: end; margin-top: 14px; flex-wrap: wrap; }
+  .field { flex: 1 1 220px; }
+  label.small { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text] { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px;
+                     background: var(--card); color: var(--text); font: inherit; }
+  button, a.btn { font: inherit; border: 0; border-radius: 8px; padding: 9px 18px; cursor: pointer;
+                  background: var(--accent); color: var(--accent-text); text-decoration: none;
+                  display: inline-block; white-space: nowrap; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 8px 12px; }
+  button.ghost:hover { color: var(--err); border-color: var(--err); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .picked { margin-top: 10px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  .msg { margin-top: 10px; font-size: 14px; color: var(--err); min-height: 1.2em; }
+  ul.jobs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .job { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .job .top { display: flex; gap: 12px; align-items: start; justify-content: space-between; }
+  .job .name { font-weight: 600; overflow-wrap: anywhere; }
+  .job .meta { font-size: 14px; color: var(--muted); margin-top: 2px; }
+  .job .actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .bar { height: 8px; background: var(--track); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+  .st-done { color: var(--ok); } .st-error { color: var(--err); } .st-warn { color: var(--warn); }
+  .empty { color: var(--muted); font-size: 14px; }
+  footer { margin-top: 36px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>แปลง PDF เป็น Word</h1>
+  <p class="lead" id="lead">OCR ภาษาไทยบนเครื่องนี้ ไฟล์ไม่ถูกส่งออกไปที่อื่น</p>
+
+  <div id="banner" class="banner" role="status"></div>
+
+  <form id="form">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="application/pdf,.pdf">
+      <strong>เลือกไฟล์ PDF หรือลากมาวางที่นี่</strong>
+      <span id="limit">ครั้งละ 1 ไฟล์</span>
+    </label>
+    <div class="picked" id="picked"></div>
+    <div class="row">
+      <div class="field">
+        <label class="small" for="pages">เลือกหน้า (เว้นว่าง = ทุกหน้า)</label>
+        <input type="text" id="pages" placeholder="เช่น 1-10,15" autocomplete="off">
+      </div>
+      <button type="submit" id="send" disabled>อัปโหลดและแปลง</button>
+    </div>
+    <div class="msg" id="msg" role="alert"></div>
+  </form>
+
+  <h2>รายการไฟล์</h2>
+  <ul class="jobs" id="jobs"></ul>
+  <p class="empty" id="empty">ยังไม่มีไฟล์</p>
+
+  <footer><span id="speed">ใช้เวลาราว 2-3 นาทีต่อหน้า</span> และแปลงทีละไฟล์ตามคิว ·
+    ข้อความที่ <mark>ไฮไลต์สีเหลือง</mark> ในไฟล์ Word คือจุดที่ระบบไม่มั่นใจ ควรตรวจกับต้นฉบับก่อน
+    (จุดที่ไม่ไฮไลต์ก็ยังอาจผิดได้) · ตำแหน่งรูปภาพและแผนที่จะเป็นกรอบว่างเขียนว่า "รูปภาพ"</footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fileInput = $("file"), drop = $("drop"), send = $("send"), msg = $("msg");
+let chosen = null;
+
+function pick(f) {
+  msg.textContent = "";
+  if (f && !/\.pdf$/i.test(f.name)) { msg.textContent = "รองรับเฉพาะไฟล์ PDF"; f = null; }
+  chosen = f || null;
+  $("picked").textContent = chosen ? `${chosen.name} (${size(chosen.size)})` : "";
+  send.disabled = !chosen;
+}
+fileInput.addEventListener("change", () => pick(fileInput.files[0]));
+["dragenter", "dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", ev => pick(ev.dataTransfer.files[0]));
+
+$("form").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (!chosen) return;
+  const body = new FormData();
+  body.append("file", chosen);
+  body.append("pages", $("pages").value);
+  send.disabled = true; send.textContent = "กำลังอัปโหลด…"; msg.textContent = "";
+  try {
+    const r = await fetch("api/jobs", { method: "POST", body });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `อัปโหลดไม่สำเร็จ (${r.status})`);
+    fileInput.value = ""; $("pages").value = ""; pick(null);
+    refresh();
+  } catch (e) {
+    msg.textContent = e.message || "อัปโหลดไม่สำเร็จ";
+    send.disabled = !chosen;
+  } finally {
+    send.textContent = "อัปโหลดและแปลง";
+  }
+});
+
+function size(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB"; }
+function dur(s) {
+  s = Math.round(s);
+  if (s < 60) return `${s} วินาที`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} นาที` : `${Math.floor(m / 60)} ชม. ${m % 60} นาที`;
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function describe(j, queueAhead) {
+  const pages = `${j.pages_total} หน้า`;
+  if (j.status === "queued") return [queueAhead ? `รอคิว (มี ${queueAhead} ไฟล์ก่อนหน้า) · ${pages}` : `รอเริ่ม · ${pages}`, ""];
+  if (j.status === "running") {
+    if (j.message) return [j.message, ""];
+    let t = `กำลังแปลง เสร็จแล้ว ${j.pages_done} จาก ${j.pages_total} หน้า`;
+    if (j.sec_per_page) t += ` · เหลือราว ${dur((j.pages_total - j.pages_done) * j.sec_per_page)}`;
+    else t += " · กำลังอ่านหน้าแรก ยังประมาณเวลาไม่ได้";
+    return [t, ""];
+  }
+  if (j.status === "done") {
+    if (j.failed && j.failed.length)
+      return [`เสร็จแล้ว แต่อ่านไม่สำเร็จ ${j.failed.length} หน้า (หน้า ${j.failed.join(", ")})`, "st-warn"];
+    return [`เสร็จแล้ว · ${pages}`, "st-done"];
+  }
+  return [`ผิดพลาด: ${j.message || "ไม่ทราบสาเหตุ"}`, "st-error"];
+}
+
+function render(data) {
+  const banner = $("banner");
+  banner.className = "banner";
+  if (data.model === "loading") { banner.textContent = "กำลังโหลดโมเดล OCR อัปโหลดไฟล์รอไว้ได้เลย"; banner.classList.add("show"); }
+  else if (data.model === "error") { banner.textContent = "โหลดโมเดลไม่สำเร็จ: " + data.model_error; banner.classList.add("show", "err"); }
+  $("limit").textContent = `ครั้งละ 1 ไฟล์ ขนาดไม่เกิน ${data.max_upload_mb} MB`;
+  $("lead").textContent = `OCR ภาษาไทยด้วย ${data.gpu ? "GPU" : "CPU"} ของเครื่องนี้ ไฟล์ไม่ถูกส่งออกไปที่อื่น`;
+  $("speed").textContent = data.gpu ? "ใช้เวลาราว 2-5 วินาทีต่อหน้า" : "ใช้เวลาราว 2-3 นาทีต่อหน้า (ไฟล์ 100 หน้าใช้หลายชั่วโมง)";
+
+  const list = $("jobs");
+  list.replaceChildren();
+  $("empty").style.display = data.jobs.length ? "none" : "";
+  const waiting = data.jobs.filter(j => j.status === "queued" || j.status === "running").reverse();
+  for (const j of data.jobs) {
+    const li = el("li", "job");
+    const top = el("div", "top");
+    const info = el("div");
+    info.append(el("div", "name", j.name));
+    const [text, cls] = describe(j, Math.max(0, waiting.findIndex(w => w.id === j.id)));
+    info.append(el("div", "meta " + cls, text));
+    const actions = el("div", "actions");
+    if (j.status === "done") {
+      const a = el("a", "btn", "ดาวน์โหลด Word");
+      a.href = `api/jobs/${j.id}/download`;
+      actions.append(a);
+    }
+    const del = el("button", "ghost", j.status === "running" || j.status === "queued" ? "ยกเลิก" : "ลบ");
+    del.type = "button";
+    del.setAttribute("aria-label", `${del.textContent} ${j.name}`);
+    del.addEventListener("click", async () => {
+      if (!confirm(`${del.textContent} "${j.name}" ?`)) return;
+      await fetch(`api/jobs/${j.id}`, { method: "DELETE" });
+      refresh();
+    });
+    actions.append(del);
+    top.append(info, actions);
+    li.append(top);
+    if (j.status === "running" || j.status === "queued") {
+      const bar = el("div", "bar"), fill = el("i");
+      fill.style.width = (j.pages_total ? 100 * j.pages_done / j.pages_total : 0) + "%";
+      bar.append(fill); li.append(bar);
+    }
+    list.append(li);
+  }
+}
+
+let timer;
+async function refresh() {
+  clearTimeout(timer);
+  try {
+    const r = await fetch("api/jobs");
+    render(await r.json());
+  } catch (e) {
+    const b = $("banner"); b.className = "banner show err"; b.textContent = "ติดต่อ server ไม่ได้ กำลังลองใหม่…";
+  }
+  timer = setTimeout(refresh, 2500);
+}
+refresh();
+</script>
+</body>
+</html>

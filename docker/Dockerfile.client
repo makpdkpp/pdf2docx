@@ -1,0 +1,16 @@
+# Client image: runs pdf2docx.py against the vLLM server.
+# Built on the server image because it already contains the nemotron_parse package.
+FROM nemotron-parse:3.5.0.post8
+
+ARG PANDOC_VERSION=3.6.4
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates fonts-thai-tlwg \
+ && curl -fsSL -o /tmp/pandoc.deb \
+      "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
+ && dpkg -i /tmp/pandoc.deb && rm /tmp/pandoc.deb \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 -m pip install --no-cache-dir pymupdf python-docx markdown
+
+ENV PYTHONIOENCODING=utf-8 PYTHONUTF8=1
+WORKDIR /data
+ENTRYPOINT ["python3", "/data/pdf2docx.py"]

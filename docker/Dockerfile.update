@@ -1,0 +1,11 @@
+# Quick update of the nemotron_parse package inside the existing server image, for a new
+# model release that keeps the same dependencies (e.g. OpenThai2.1). Avoids the hour-long
+# full build. Build context: the new model folder.
+#   docker build -f docker/Dockerfile.update -t nemotron-parse:3.5.0.post8 model
+ARG BASE=nemotron-parse:3.5.0.post7
+FROM ${BASE}
+COPY pyproject.toml LICENSE THIRD_PARTY_NOTICES.md TOKENIZER_ATTRIBUTION.md postprocessing.py latex2html.py /tmp/nemotron-package/
+COPY nemotron_parse /tmp/nemotron-package/nemotron_parse
+COPY vllm_tied_patch /tmp/nemotron-package/vllm_tied_patch
+RUN python3 -m pip install --no-deps --force-reinstall "/tmp/nemotron-package" && python3 -m pip check \
+ && rm -rf /tmp/nemotron-package

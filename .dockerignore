@@ -1,0 +1,15 @@
+# Keep the build context small: only the app and the model's Python package are needed.
+*
+!pdf2docx.py
+!webapp.py
+!web
+!model
+model/*
+!model/pyproject.toml
+!model/LICENSE
+!model/THIRD_PARTY_NOTICES.md
+!model/TOKENIZER_ATTRIBUTION.md
+!model/postprocessing.py
+!model/latex2html.py
+!model/nemotron_parse
+!model/vllm_tied_patch

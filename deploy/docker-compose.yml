@@ -1,0 +1,30 @@
+# pdf2docx web UI, CPU only.  Settings come from the .env file next to this one
+# (created by setup.sh; see env.example).
+name: pdf2docx
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: pdf2docx-web:cpu
+    container_name: pdf2docx-web
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${BIND:-127.0.0.1}:${PORT:-8080}:8080"
+    environment:
+      WEB_USER: "${WEB_USER:-admin}"
+      WEB_PASSWORD: "${WEB_PASSWORD:-}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-200}"
+      OCR_THREADS: "${OCR_THREADS:-}"
+      OCR_ROTATE: "${OCR_ROTATE:-1}"
+    volumes:
+      - ../model:/app/model:ro
+      - ../webdata:/jobs
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

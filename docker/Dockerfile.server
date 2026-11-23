@@ -1,0 +1,15 @@
+# vLLM server image for OpenThai2.0-OCR-Markdown (Nemotron 3.5 Parse).
+# Same as model/Dockerfile, but the model weights are NOT baked into the image:
+# mount the model folder at /workspace when running.
+# Build context: the model folder (docker build -f docker/Dockerfile.server model)
+FROM vllm/vllm-openai:v0.26.0
+WORKDIR /workspace
+RUN python3 -m venv /opt/nemotron-parse-venv
+ENV PATH="/opt/nemotron-parse-venv/bin:$PATH" \
+    VIRTUAL_ENV="/opt/nemotron-parse-venv" \
+    PYTHONPATH=""
+COPY pyproject.toml LICENSE THIRD_PARTY_NOTICES.md TOKENIZER_ATTRIBUTION.md postprocessing.py latex2html.py /tmp/nemotron-package/
+COPY nemotron_parse /tmp/nemotron-package/nemotron_parse
+COPY vllm_tied_patch /tmp/nemotron-package/vllm_tied_patch
+RUN python3 -m pip install "/tmp/nemotron-package[vllm,client]" && python3 -m pip check
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]

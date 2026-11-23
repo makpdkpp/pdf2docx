@@ -1,5 +1,20 @@
 __pycache__/
+*.pyc
 .venv/
+.env
+deploy/.env
+
+# model weights (download from Hugging Face; too large for git)
+model/
+model-v20/
+model21/
+
+# outputs / runtime data / build artifacts
+output/
+output-v21/
+webdata/
+dist/
 *.pages/
-*.pdf
-!examples/*.pdf
+test/*.docx
+*.docx
+!examples/*.docx
