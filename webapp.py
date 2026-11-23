@@ -156,6 +156,7 @@ def convert(job_id: str, backend) -> None:
                     pending[pool.submit(core.ocr_page, img, backend, ROTATE)] = (i, img)
                 if not pending:
                     break
+                update(job_id, pages_running=min(len(pending), WORKERS), started=t0)
                 finished, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for fut in finished:
                     i, img = pending.pop(fut)
@@ -178,7 +179,7 @@ def convert(job_id: str, backend) -> None:
         pages_md = [results[i] for i in indices]
         if job_id not in jobs:
             return
-        update(job_id, message="กำลังสร้างไฟล์ Word")
+        update(job_id, message="กำลังสร้างไฟล์ Word", pages_running=0)
         core.markdown_pages_to_docx(pages_md, d / "output.docx", work)
         update(job_id, status="done", message="", finished=time.time())
     finally:
@@ -214,7 +215,8 @@ def worker() -> None:
 
 def public(job: dict) -> dict:
     return {k: job.get(k) for k in ("id", "name", "created", "status", "message", "pages_total",
-                                    "pages_done", "failed", "sec_per_page", "size")}
+                                    "pages_done", "failed", "sec_per_page", "size",
+                                    "pages_running", "started")}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -227,6 +229,7 @@ def list_jobs() -> dict:
     with lock:
         items = sorted(jobs.values(), key=lambda j: j["created"], reverse=True)
         return {"model": state["model"], "model_error": state["error"], "gpu": bool(BASE_URL),
+                "workers": WORKERS, "now": time.time(),
                 "max_upload_mb": MAX_UPLOAD // (1024 * 1024),
                 "jobs": [public(j) for j in items]}
 

@@ -56,6 +56,10 @@
   .job .actions { display: flex; gap: 8px; flex-shrink: 0; }
   .bar { height: 8px; background: var(--track); border-radius: 4px; margin-top: 10px; overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+  .bar.busy { background-image: linear-gradient(90deg, transparent 0, var(--accent) 50%, transparent 100%);
+              background-size: 40% 100%; background-repeat: no-repeat; animation: busy 1.6s linear infinite; }
+  @keyframes busy { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+  @media (prefers-reduced-motion: reduce) { .bar.busy { animation: none; background-position: 50% 0; } }
   .st-done { color: var(--ok); } .st-error { color: var(--err); } .st-warn { color: var(--warn); }
   .empty { color: var(--muted); font-size: 14px; }
   footer { margin-top: 36px; font-size: 13px; color: var(--muted); }
@@ -151,7 +155,10 @@ function describe(j, queueAhead) {
   if (j.status === "running") {
     if (j.message) return [j.message, ""];
     let t = `กำลังแปลง เสร็จแล้ว ${j.pages_done} จาก ${j.pages_total} หน้า`;
+    if (j.pages_running) t += ` · กำลังอ่านพร้อมกัน ${j.pages_running} หน้า`;
+    if (j.started) t += ` · ผ่านไป ${dur(Math.max(0, serverNow - j.started))}`;
     if (j.sec_per_page) t += ` · เหลือราว ${dur((j.pages_total - j.pages_done) * j.sec_per_page)}`;
+    else if (j.pages_running > 1) t += " · หน้าชุดแรกจะเสร็จพร้อมกันเป็นชุด ยังประมาณเวลาไม่ได้";
     else t += " · กำลังอ่านหน้าแรก ยังประมาณเวลาไม่ได้";
     return [t, ""];
   }
@@ -163,14 +170,17 @@ function describe(j, queueAhead) {
   return [`ผิดพลาด: ${j.message || "ไม่ทราบสาเหตุ"}`, "st-error"];
 }
 
+let serverNow = Date.now() / 1000;
 function render(data) {
+  if (data.now) serverNow = data.now;
   const banner = $("banner");
   banner.className = "banner";
   if (data.model === "loading") { banner.textContent = "กำลังโหลดโมเดล OCR อัปโหลดไฟล์รอไว้ได้เลย"; banner.classList.add("show"); }
   else if (data.model === "error") { banner.textContent = "โหลดโมเดลไม่สำเร็จ: " + data.model_error; banner.classList.add("show", "err"); }
   $("limit").textContent = `ครั้งละ 1 ไฟล์ ขนาดไม่เกิน ${data.max_upload_mb} MB`;
   $("lead").textContent = `OCR ภาษาไทยด้วย ${data.gpu ? "GPU" : "CPU"} ของเครื่องนี้ ไฟล์ไม่ถูกส่งออกไปที่อื่น`;
-  $("speed").textContent = data.gpu ? "ใช้เวลาราว 2-5 วินาทีต่อหน้า" : "ใช้เวลาราว 2-3 นาทีต่อหน้า (ไฟล์ 100 หน้าใช้หลายชั่วโมง)";
+  $("speed").textContent = data.gpu ? "ใช้เวลาราว 2-5 วินาทีต่อหน้า"
+    : `อ่านพร้อมกัน ${data.workers || 1} หน้า หน้าละหลายนาที (ไฟล์ 100 หน้าใช้หลายชั่วโมง)`;
 
   const list = $("jobs");
   list.replaceChildren();
@@ -203,6 +213,7 @@ function render(data) {
     if (j.status === "running" || j.status === "queued") {
       const bar = el("div", "bar"), fill = el("i");
       fill.style.width = (j.pages_total ? 100 * j.pages_done / j.pages_total : 0) + "%";
+      if (j.status === "running" && !j.pages_done) bar.classList.add("busy");   // alive, no page done yet
       bar.append(fill); li.append(bar);
     }
     list.append(li);
