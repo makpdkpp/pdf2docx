@@ -141,6 +141,7 @@ def convert(job_id: str, backend) -> None:
             else:
                 results[i] = text
         update(job_id, pages_done=len(results))
+        print(f"[{job_id}] start: {len(todo_pages)} pages to read, {WORKERS} at a time", flush=True)
         timed = 0
         t0 = time.time()
         pending: dict = {}
@@ -164,7 +165,12 @@ def convert(job_id: str, backend) -> None:
                         text, ok = fut.result()
                         text = core.fix_thai(text)
                     except Exception as e:        # keep going on single-page failure
+                        import traceback
+                        print(f"[{job_id}] page {i + 1} error: {type(e).__name__}: {e}", flush=True)
+                        traceback.print_exc()
                         text, ok = f"> [หน้า {i + 1} ผิดพลาด: {e}]", False
+                    print(f"[{job_id}] page {i + 1} {'ok' if ok else 'FAILED'} "
+                          f"({len(results) + 1}/{len(indices)}, {time.time() - t0:.0f}s elapsed)", flush=True)
                     img.unlink(missing_ok=True)
                     if ok:
                         (cache / f"page_{i + 1:05d}.md").write_text(text, encoding="utf-8")
