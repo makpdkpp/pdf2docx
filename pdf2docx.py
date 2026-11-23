@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 import subprocess
 import sys
@@ -311,12 +312,27 @@ class LocalBackend:
                     "usage": {"completion_tokens": generated}}
 
 
+def cpu_has_fast_bf16() -> bool:
+    """True when the CPU has native bfloat16 math (Intel AMX / AVX512-BF16, AMD Zen 4+).
+    Without it bfloat16 on CPU is emulated and slower than float32."""
+    try:
+        flags = Path("/proc/cpuinfo").read_text(errors="ignore")
+    except OSError:
+        return False
+    return "amx_bf16" in flags or "avx512_bf16" in flags
+
+
 def load_cpu_backend(model_dir: Path, threads: int | None, threshold: float = 0.8,
-                     drop=DROP_CLASSES) -> LocalBackend:
+                     drop=DROP_CLASSES, dtype: str = "auto", quant: str = "none") -> LocalBackend:
     """Load the model in-process with Transformers (no vLLM server, no GPU needed).
 
     Much slower than the vLLM server, but runs anywhere. Uses a GPU only if this
     process can see one.
+
+    dtype: "auto" (bfloat16 on GPU, or on a CPU with native bf16; else float32),
+           "fp32" or "bf16".
+    quant: "none" or "int8" (dynamic int8 for the Linear layers, CPU only: faster,
+           but check the output quality on your own documents first).
     """
     import torch
     from transformers import AutoModel, AutoProcessor
@@ -324,13 +340,131 @@ def load_cpu_backend(model_dir: Path, threads: int | None, threshold: float = 0.
     if threads:
         torch.set_num_threads(threads)
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    dtype = torch.bfloat16 if device != "cpu" else torch.float32
-    model = AutoModel.from_pretrained(model_dir, trust_remote_code=True, dtype=dtype,
+    if dtype == "auto":
+        dtype = "bf16" if device != "cpu" or cpu_has_fast_bf16() else "fp32"
+    if quant == "int8" and device == "cpu":
+        dtype = "fp32"                               # dynamic int8 quantization needs fp32 weights
+    torch_dtype = torch.bfloat16 if dtype == "bf16" else torch.float32
+    model = AutoModel.from_pretrained(model_dir, trust_remote_code=True, dtype=torch_dtype,
                                       local_files_only=True).to(device).eval()
+    if quant == "int8" and device == "cpu":
+        try:
+            model = torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear},
+                                                           dtype=torch.qint8)
+        except Exception as e:                       # keep running unquantized
+            print(f"int8 quantization failed, using fp32: {e}")
+            quant = "none"
     processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True,
                                               local_files_only=True)
-    print(f"โหลดโมเดลแล้ว: {device}, {torch.get_num_threads()} threads")
+    print(f"โหลดโมเดลแล้ว: {device}, {dtype}{', int8' if quant == 'int8' else ''}, "
+          f"{torch.get_num_threads()} threads", flush=True)
     return LocalBackend(model, processor, threshold, drop)
+
+
+# ---------------------------------------------------------------- several CPU workers
+# Generating text one token at a time for one page barely gets faster past ~4-6
+# threads, so a single model on a 16-core machine leaves most cores waiting (the
+# CPU still shows 100% because idle OpenMP threads spin). Running several copies of
+# the model, each with a few threads and its own page, uses the cores far better.
+# Each copy is a separate process: the generate() loop is Python and would fight
+# over the GIL in threads.
+
+_WORKER_BACKEND = None
+
+
+def _pool_init(model_dir: str, threads: int, threshold: float, drop, dtype: str, quant: str):
+    import torch
+    torch.set_num_threads(threads)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+    global _WORKER_BACKEND
+    _WORKER_BACKEND = load_cpu_backend(Path(model_dir), threads, threshold, drop, dtype, quant)
+
+
+def _pool_ready(_):
+    time.sleep(0.5)                                  # keeps this worker busy so the next one starts
+    return os.getpid()
+
+
+def _pool_call(image, prompt, stage, settings):
+    return _WORKER_BACKEND(image, prompt=prompt, stage=stage, settings=settings)
+
+
+def _available_memory_gb() -> float:
+    """Memory this process may use: the container limit if there is one, else MemAvailable."""
+    limit = None
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = Path(path).read_text().strip()
+            if raw.isdigit() and int(raw) < 1 << 50:
+                limit = int(raw) / 2**30
+                break
+        except OSError:
+            pass
+    avail = None
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                avail = int(line.split()[1]) / 2**20
+    except OSError:
+        pass
+    vals = [v for v in (limit, avail) if v]
+    return min(vals) if vals else 8.0
+
+
+def plan_cpu_workers(replicas: int | None = None, threads: int | None = None,
+                     dtype: str = "auto", quant: str = "none") -> tuple[int, int]:
+    """Choose (model copies, threads per copy) for this machine."""
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 4)
+    if replicas and threads:
+        return replicas, threads
+    if replicas:
+        return replicas, max(1, cpus // replicas)
+    threads = threads or (4 if cpus >= 8 else cpus)
+    bf16 = dtype == "bf16" or (dtype == "auto" and quant != "int8" and cpu_has_fast_bf16())
+    per_copy_gb = 2.0 if bf16 or quant == "int8" else 3.5     # weights + activations, with headroom
+    by_ram = int((_available_memory_gb() - 2) // per_copy_gb)  # keep 2 GB for the rest
+    return max(1, min(cpus // threads, by_ram)), threads
+
+
+class PoolBackend:
+    """Several copies of the model in worker processes; call it from several threads
+    at once (one page per call) and each call goes to an idle copy."""
+
+    def __init__(self, model_dir: Path, replicas: int, threads: int, threshold: float = 0.8,
+                 drop=DROP_CLASSES, dtype: str = "auto", quant: str = "none"):
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        self.drop, self.replicas, self.threads = drop, replicas, threads
+        self.pool = ProcessPoolExecutor(
+            max_workers=replicas, mp_context=multiprocessing.get_context("spawn"),
+            initializer=_pool_init,
+            initargs=(str(model_dir), threads, threshold, drop, dtype, quant))
+        # start and load every copy now, not when the first pages arrive
+        pids = set(f.result() for f in [self.pool.submit(_pool_ready, i) for i in range(replicas)])
+        print(f"CPU OCR: {replicas} model copies x {threads} threads ({len(pids)} started)",
+              flush=True)
+
+    def __call__(self, image, *, prompt, stage, settings):
+        return self.pool.submit(_pool_call, image, prompt, stage, settings).result()
+
+    def close(self):
+        self.pool.shutdown(cancel_futures=True)
+
+
+def load_cpu_pool(model_dir: Path, replicas: int | None = None, threads: int | None = None,
+                  threshold: float = 0.8, drop=DROP_CLASSES, dtype: str = "auto",
+                  quant: str = "none"):
+    """One model in this process if one copy is enough, else a PoolBackend."""
+    replicas, threads = plan_cpu_workers(replicas, threads, dtype, quant)
+    if replicas == 1:
+        backend = load_cpu_backend(model_dir, threads, threshold, drop, dtype, quant)
+        backend.replicas = 1
+        return backend
+    return PoolBackend(model_dir, replicas, threads, threshold, drop, dtype, quant)
 
 
 def _confident_chars(md: str) -> tuple[int, int]:
@@ -1241,7 +1375,15 @@ def main() -> None:
                          "calling a vLLM server (works on CPU; slow)")
     ap.add_argument("--model-dir", type=Path, default=Path(__file__).resolve().parent / "model",
                     help="model folder used by --local")
-    ap.add_argument("--threads", type=int, help="CPU threads for --local (default: all)")
+    ap.add_argument("--threads", type=int,
+                    help="CPU threads per model copy for --local (default: 4)")
+    ap.add_argument("--replicas", type=int,
+                    help="model copies for --local, each reads its own page "
+                         "(default: CPUs / threads, limited by free RAM)")
+    ap.add_argument("--dtype", choices=["auto", "fp32", "bf16"], default="auto",
+                    help="--local precision (auto = bf16 only on CPUs with native bf16)")
+    ap.add_argument("--quant", choices=["none", "int8"], default="none",
+                    help="--local: int8 dynamic quantization (faster; check quality first)")
     ap.add_argument("--confidence", type=float, default=0.8, metavar="0-1",
                     help="highlight text the model was less sure about than this "
                          "(default 0.8; higher marks more, 0 turns highlighting off)")
@@ -1285,8 +1427,9 @@ def main() -> None:
 
             drop = () if args.keep_pictures else DROP_CLASSES
             if args.local and todo:
-                backend = load_cpu_backend(args.model_dir, args.threads, args.confidence, drop)
-                args.workers = 1                     # one model instance, one page at a time
+                backend = load_cpu_pool(args.model_dir, args.replicas, args.threads,
+                                        args.confidence, drop, args.dtype, args.quant)
+                args.workers = backend.replicas      # one page per model copy
             else:
                 backend = VllmBackend(args.base_url, args.model, args.confidence, drop)
 

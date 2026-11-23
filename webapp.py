@@ -37,6 +37,11 @@ ROTATE = os.environ.get("OCR_ROTATE", "1") != "0"   # re-read sideways / plan pa
 # do the OCR on its GPU instead of this container's CPU: seconds per page instead of minutes.
 BASE_URL = os.environ.get("OCR_BASE_URL", "").strip()
 WORKERS = max(1, int(os.environ.get("OCR_WORKERS", "6"))) if BASE_URL else 1
+# CPU mode: several copies of the model, each reading its own page (see core.PoolBackend).
+# Empty = choose from the CPU count and free RAM.
+REPLICAS = int(os.environ["OCR_REPLICAS"]) if os.environ.get("OCR_REPLICAS") else None
+DTYPE = os.environ.get("OCR_DTYPE", "auto")          # auto | fp32 | bf16
+QUANT = os.environ.get("OCR_QUANT", "none")          # none | int8
 
 WEB_USER = os.environ.get("WEB_USER", "admin")
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "")          # empty = no login required
@@ -182,12 +187,14 @@ def convert(job_id: str, backend) -> None:
 
 
 def worker() -> None:
+    global WORKERS
     try:
         if BASE_URL:
             backend = core.VllmBackend(BASE_URL, os.environ.get("OCR_MODEL", "nemotron-parse"), 0.8)
             print(f"OCR on the vLLM server at {BASE_URL}, {WORKERS} pages at a time")
         else:
-            backend = core.load_cpu_backend(MODEL_DIR, THREADS)
+            backend = core.load_cpu_pool(MODEL_DIR, REPLICAS, THREADS, dtype=DTYPE, quant=QUANT)
+            WORKERS = backend.replicas
         state["model"] = "ready"
     except Exception as e:
         state.update(model="error", error=f"{type(e).__name__}: {e}")

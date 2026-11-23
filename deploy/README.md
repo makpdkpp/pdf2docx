@@ -9,7 +9,7 @@
 - ต่ออินเทอร์เน็ตได้ตอนติดตั้ง เพื่อดาวน์โหลดโมเดลและแพ็กเกจ
 - ผู้ใช้ที่มีสิทธิ์ `sudo`
 
-ความเร็วขึ้นกับ CPU: เครื่องทดสอบ (6 thread) ใช้ราว 2-3 นาทีต่อหน้า และแปลงทีละไฟล์ตามคิว
+ความเร็วขึ้นกับ CPU: เครื่องทดสอบ (6 thread) ใช้ราว 2-3 นาทีต่อหน้า แปลงทีละไฟล์ตามคิว แต่ในไฟล์เดียวกันจะอ่านหลายหน้าพร้อมกันตามจำนวน copy ของโมเดล (ดู `OCR_REPLICAS`)
 
 ## ขั้นตอน
 
@@ -96,9 +96,30 @@ cd /opt/pdf2docx/deploy && docker compose up -d
 | `BIND`, `PORT` | ที่อยู่และพอร์ตที่เว็บฟัง |
 | `WEB_USER`, `WEB_PASSWORD` | บัญชีเข้าเว็บ (รหัสผ่านว่างได้เฉพาะเมื่อ `BIND=127.0.0.1`) |
 | `MAX_UPLOAD_MB` | ขนาด PDF สูงสุด (ค่าเริ่มต้น 200) |
-| `OCR_THREADS` | จำนวน thread ของ CPU ที่ใช้ OCR (ว่าง = ให้ PyTorch เลือก) |
+| `OCR_REPLICAS` | จำนวน copy ของโมเดลที่อ่านหน้าพร้อมกัน (ว่าง = เลือกเองจากจำนวน CPU และ RAM ที่ว่าง; copy ละราว 3.5 GB แบบ fp32) |
+| `OCR_THREADS` | จำนวน thread ต่อ copy (ว่าง = 4) |
+| `OCR_DTYPE` | `auto` (ใช้ bf16 ถ้า CPU รองรับในตัว), `fp32`, `bf16` |
+| `OCR_QUANT` | `none` หรือ `int8` (เร็วขึ้นและใช้ RAM น้อยลง แต่ต้องตรวจคุณภาพก่อน) |
 | `PUID`, `PGID` | ผู้ใช้ที่เป็นเจ้าของ `webdata/` |
 | `MODEL_REPO`, `MODEL_REVISION` | โมเดลและรุ่นที่ดาวน์โหลด |
+
+## ปรับความเร็วบน CPU
+โมเดลหนึ่ง copy สร้างข้อความทีละ token จึงใช้ core ได้ไม่เกินราว 4-6 core ถึงจะเห็น CPU 100% ก็ตาม
+(thread ที่เหลือวนรอ) ระบบจึงเปิดโมเดลหลาย copy ให้แต่ละ copy อ่านคนละหน้า
+เช่น เครื่อง 16 core / RAM 32 GB จะได้ 4 copy x 4 thread อัตโนมัติ
+
+วัดความเร็วบนเครื่องตัวเอง (8 หน้าแรกของไฟล์ทดสอบ):
+```bash
+cd /opt/pdf2docx/deploy
+docker compose stop web          # ไม่ให้โมเดลของหน้าเว็บแย่ง CPU/RAM ระหว่างวัด
+# แบบเดิม: 1 copy x 16 thread
+docker compose run --rm web python3 /app/pdf2docx.py /jobs/test.pdf -o /jobs/a.docx --local --pages 1-8 --replicas 1 --threads 16
+# แบบใหม่ (อัตโนมัติ)
+docker compose run --rm web python3 /app/pdf2docx.py /jobs/test.pdf -o /jobs/b.docx --local --pages 1-8
+docker compose start web
+```
+(คัดลอก PDF ไปไว้ที่ `webdata/test.pdf` ก่อน และลบ `webdata/a.pages`, `webdata/b.pages` ถ้าจะวัดซ้ำ)
+ดูค่า `~X.Xs/หน้า` ตอนท้าย แล้วลองปรับ `OCR_REPLICAS`/`OCR_THREADS` เช่น 3x5, 4x4, 8x2 แล้วเลือกค่าที่เร็วที่สุด
 
 ## แก้ปัญหา
 - **หน้าเว็บขึ้น "กำลังโหลดโมเดล" นาน**: ปกติใช้ไม่เกิน 1 นาที ดูสาเหตุด้วย `docker compose logs`
